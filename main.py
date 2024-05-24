@@ -18,6 +18,9 @@ def sigmoid(x):
 
 # Binary cross-entropy loss
 def binary_cross_entropy(preds, targets):
+    # Adding a small epsilon to avoid log(0)
+    epsilon = 1e-10
+    preds = np.clip(preds, epsilon, 1 - epsilon)
     return -np.mean(targets * np.log(preds) + (1 - targets) * np.log(1 - preds))
 
 # Forward pass
@@ -33,6 +36,11 @@ def backward(pretrained_output, preds, labels, adapter_weights, adapter_bias, le
     d_weights = np.dot(pretrained_output.T, d_loss) / len(labels)  # Gradient of the loss wrt weights
     d_bias = np.sum(d_loss) / len(labels)  # Gradient of the loss wrt bias
 
+    # Gradient clipping to avoid exploding gradients
+    clip_value = 1.0
+    d_weights = np.clip(d_weights, -clip_value, clip_value)
+    d_bias = np.clip(d_bias, -clip_value, clip_value)
+
     # Update weights and bias
     adapter_weights -= learning_rate * d_weights
     adapter_bias -= learning_rate * d_bias
@@ -44,8 +52,14 @@ epochs = 1000
 for epoch in range(epochs):
     preds = forward(pretrained_output, adapter_weights, adapter_bias)
     loss = binary_cross_entropy(preds, labels)
+    
+    # Check for NaN loss
+    if np.isnan(loss):
+        print(f"Epoch {epoch}: Loss became NaN, stopping training.")
+        break
+    
     adapter_weights, adapter_bias = backward(pretrained_output, preds, labels, adapter_weights, adapter_bias)
-
+    
     if epoch % 100 == 0:
         print(f"Epoch {epoch}, Loss: {loss:.4f}")
 
