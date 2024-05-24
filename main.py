@@ -1,72 +1,55 @@
 import torch
-from transformers import BertModel, BertTokenizer, BertForSequenceClassification, AdamW
-from torch.utils.data import DataLoader, TensorDataset
+from transformers import BertTokenizer, BertModel
 import torch.nn as nn
-import numpy as np
+import torch.optim as optim
 
 # Load pre-trained BERT model and tokenizer
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 bert_model = BertModel.from_pretrained('bert-base-uncased')
 
-# Example data for sentiment analysis
+# Example data
 texts = ["I love this movie!", "This movie is terrible."]
-labels = [1, 0]  # 1 for positive sentiment, 0 for negative sentiment
+labels = torch.tensor([1, 0], dtype=torch.float32)  # 1 for positive, 0 for negative
 
 # Tokenize input texts
-tokenized_texts = tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
+inputs = tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
 
-# Prepare input tensors
-input_ids = tokenized_texts["input_ids"]
-attention_masks = tokenized_texts["attention_mask"]
-
-# Define dataset
-dataset = TensorDataset(input_ids, attention_masks, torch.tensor(labels))
-
-# Define model with adapter layers
+# Define a simple model with an adapter layer
 class SentimentClassifier(nn.Module):
     def __init__(self, bert_model):
         super(SentimentClassifier, self).__init__()
         self.bert = bert_model
-        self.adapter = nn.Linear(768, 1)  # Adapter layer with one output for binary sentiment classification
+        self.adapter = nn.Linear(768, 1)  # Adapter layer
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, input_ids, attention_mask):
-        outputs = self.bert(input_ids, attention_mask)
-        pooled_output = outputs[1]  # Take the pooled output (CLS token representation)
+        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        pooled_output = outputs.pooler_output  # [CLS] token representation
         sentiment_logits = self.adapter(pooled_output)
         sentiment_probs = self.sigmoid(sentiment_logits)
-        return sentiment_probs.view(-1)
+        return sentiment_probs
 
 # Instantiate the model
 model = SentimentClassifier(bert_model)
 
-# Define optimizer
-optimizer = AdamW(model.parameters(), lr=1e-5)
+# Define loss and optimizer
+criterion = nn.BCELoss()
+optimizer = optim.Adam(model.adapter.parameters(), lr=1e-4)  # Only train the adapter
 
-# Define loss function
-loss_fn = nn.BCELoss()
-
-# Training loop
-epochs = 3
-batch_size = 2
-
-for epoch in range(epochs):
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    total_loss = 0
-    for batch in dataloader:
-        optimizer.zero_grad()
-        input_ids_batch, attention_masks_batch, labels_batch = batch
-        sentiment_probs = model(input_ids_batch, attention_masks_batch)
-        loss = loss_fn(sentiment_probs, labels_batch.float())
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item()
-    print(f"Epoch {epoch + 1}, Loss: {total_loss:.4f}")
+# Training loop (simplified)
+model.train()
+input_ids, attention_mask = inputs["input_ids"], inputs["attention_mask"]
+optimizer.zero_grad()
+outputs = model(input_ids, attention_mask).squeeze()
+loss = criterion(outputs, labels)
+loss.backward()
+optimizer.step()
+print(f"Loss: {loss.item():.4f}")
 
 # Example inference
+model.eval()
 test_text = "This movie is fantastic!"
 test_input = tokenizer(test_text, return_tensors="pt", padding=True, truncation=True)
-test_input_ids = test_input["input_ids"]
-test_attention_mask = test_input["attention_mask"]
-predicted_sentiment = model(test_input_ids, test_attention_mask).item()
-print(f"Predicted sentiment probability: {predicted_sentiment:.4f}")
+with torch.no_grad():
+    test_output = model(test_input["input_ids"], test_input["attention_mask"]).item()
+print(f"Predicted sentiment probability: {test_output:.4f}")
