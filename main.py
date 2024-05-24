@@ -94,10 +94,21 @@ class LoRA(nn.Module):
     def forward(self, x):
         return self.original_layer(x) + torch.mm(self.lora_a, self.lora_b)
 
+class LoRA(nn.Module):
+    def __init__(self, in_features, out_features, rank):
+        super(LoRA, self).__init__()
+        self.rank = rank
+        self.linear = nn.Linear(in_features, out_features)
+        self.lora_a = nn.Parameter(torch.randn(in_features, rank))
+        self.lora_b = nn.Parameter(torch.randn(rank, out_features))
+    
+    def forward(self, x):
+        return self.linear(x) + torch.mm(x, torch.mm(self.lora_a, self.lora_b).t())
+
 class SimpleNNWithLoRA(nn.Module):
     def __init__(self):
         super(SimpleNNWithLoRA, self).__init__()
-        self.fc1 = LoRA(nn.Linear(2, 10), rank=2)
+        self.fc1 = LoRA(2, 10, rank=2)
         self.fc2 = nn.Linear(10, 2)
     
     def forward(self, x):
