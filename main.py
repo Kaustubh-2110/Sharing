@@ -1,55 +1,55 @@
-import torch
-from transformers import BertTokenizer, BertModel
-import torch.nn as nn
-import torch.optim as optim
-
-# Load pre-trained BERT model and tokenizer
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-bert_model = BertModel.from_pretrained('bert-base-uncased')
+import numpy as np
 
 # Example data
 texts = ["I love this movie!", "This movie is terrible."]
-labels = torch.tensor([1, 0], dtype=torch.float32)  # 1 for positive, 0 for negative
+labels = np.array([1, 0])  # 1 for positive, 0 for negative
 
-# Tokenize input texts
-inputs = tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
+# Simulated output from a pre-trained model (2 samples, 768 features each)
+np.random.seed(0)
+pretrained_output = np.random.rand(2, 768)
 
-# Define a simple model with an adapter layer
-class SentimentClassifier(nn.Module):
-    def __init__(self, bert_model):
-        super(SentimentClassifier, self).__init__()
-        self.bert = bert_model
-        self.adapter = nn.Linear(768, 1)  # Adapter layer
-        self.sigmoid = nn.Sigmoid()
+# Adapter layer weights (768 input features, 1 output feature)
+adapter_weights = np.random.rand(768, 1)
+adapter_bias = np.random.rand(1)
 
-    def forward(self, input_ids, attention_mask):
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        pooled_output = outputs.pooler_output  # [CLS] token representation
-        sentiment_logits = self.adapter(pooled_output)
-        sentiment_probs = self.sigmoid(sentiment_logits)
-        return sentiment_probs
+# Sigmoid function
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
 
-# Instantiate the model
-model = SentimentClassifier(bert_model)
+# Binary cross-entropy loss
+def binary_cross_entropy(preds, targets):
+    return -np.mean(targets * np.log(preds) + (1 - targets) * np.log(1 - preds))
 
-# Define loss and optimizer
-criterion = nn.BCELoss()
-optimizer = optim.Adam(model.adapter.parameters(), lr=1e-4)  # Only train the adapter
+# Forward pass
+def forward(pretrained_output, adapter_weights, adapter_bias):
+    logits = np.dot(pretrained_output, adapter_weights) + adapter_bias
+    preds = sigmoid(logits)
+    return preds
+
+# Backward pass and parameter update
+def backward(pretrained_output, preds, labels, adapter_weights, adapter_bias, learning_rate=0.01):
+    # Compute gradients
+    d_loss = preds - labels.reshape(-1, 1)  # Gradient of the loss wrt predictions
+    d_weights = np.dot(pretrained_output.T, d_loss) / len(labels)  # Gradient of the loss wrt weights
+    d_bias = np.sum(d_loss) / len(labels)  # Gradient of the loss wrt bias
+
+    # Update weights and bias
+    adapter_weights -= learning_rate * d_weights
+    adapter_bias -= learning_rate * d_bias
+
+    return adapter_weights, adapter_bias
 
 # Training loop (simplified)
-model.train()
-input_ids, attention_mask = inputs["input_ids"], inputs["attention_mask"]
-optimizer.zero_grad()
-outputs = model(input_ids, attention_mask).squeeze()
-loss = criterion(outputs, labels)
-loss.backward()
-optimizer.step()
-print(f"Loss: {loss.item():.4f}")
+epochs = 1000
+for epoch in range(epochs):
+    preds = forward(pretrained_output, adapter_weights, adapter_bias)
+    loss = binary_cross_entropy(preds, labels)
+    adapter_weights, adapter_bias = backward(pretrained_output, preds, labels, adapter_weights, adapter_bias)
+
+    if epoch % 100 == 0:
+        print(f"Epoch {epoch}, Loss: {loss:.4f}")
 
 # Example inference
-model.eval()
-test_text = "This movie is fantastic!"
-test_input = tokenizer(test_text, return_tensors="pt", padding=True, truncation=True)
-with torch.no_grad():
-    test_output = model(test_input["input_ids"], test_input["attention_mask"]).item()
-print(f"Predicted sentiment probability: {test_output:.4f}")
+test_pretrained_output = np.random.rand(1, 768)  # Simulated pre-trained output for a new sample
+test_pred = forward(test_pretrained_output, adapter_weights, adapter_bias)
+print(f"Predicted sentiment probability: {test_pred[0, 0]:.4f}")
