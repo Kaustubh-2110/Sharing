@@ -46,71 +46,24 @@ y_train_tensor = torch.tensor(y_train, dtype=torch.long)
 X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
 y_test_tensor = torch.tensor(y_test, dtype=torch.long)
 
-class SimpleNN(nn.Module):
-    def __init__(self):
-        super(SimpleNN, self).__init__()
-        self.fc1 = nn.Linear(2, 10)
-        self.fc2 = nn.Linear(10, 2)
-    
-    def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        x = self.fc2(x)
-        return x
-
-model = SimpleNN()
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
-
-# Train the model
-num_epochs = 50
-for epoch in range(num_epochs):
-    model.train()
-    optimizer.zero_grad()
-    outputs = model(X_train_tensor)
-    loss = criterion(outputs, y_train_tensor)
-    loss.backward()
-    optimizer.step()
-    if (epoch+1) % 10 == 0:
-        print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
-
-# Evaluate the model
-model.eval()
-with torch.no_grad():
-    test_outputs = model(X_test_tensor)
-    _, predicted = torch.max(test_outputs, 1)
-    accuracy = (predicted == y_test_tensor).sum().item() / y_test_tensor.size(0)
-    print(f'Accuracy of the model on the test set: {accuracy * 100:.2f}%')
-    report = classification_report(y_test_tensor, predicted, target_names=['Class 0', 'Class 1'])
-    print(report)
-
-class LoRA(nn.Module):
-    def __init__(self, original_layer, rank):
-        super(LoRA, self).__init__()
-        self.original_layer = original_layer
-        self.rank = rank
-        self.lora_a = nn.Parameter(torch.randn(original_layer.weight.size(0), rank))
-        self.lora_b = nn.Parameter(torch.randn(rank, original_layer.weight.size(1)))
-    
-    def forward(self, x):
-        return self.original_layer(x) + torch.mm(self.lora_a, self.lora_b)
-
-class LoRA(nn.Module):
+class LoRALayer(nn.Module):
     def __init__(self, in_features, out_features, rank):
-        super(LoRA, self).__init__()
+        super(LoRALayer, self).__init__()
         self.rank = rank
-        self.linear = nn.Linear(in_features, out_features)
+        self.weight = nn.Parameter(torch.randn(out_features, in_features))
         self.lora_a = nn.Parameter(torch.randn(in_features, rank))
         self.lora_b = nn.Parameter(torch.randn(rank, out_features))
-    
+
     def forward(self, x):
-        return self.linear(x) + torch.mm(x, torch.mm(self.lora_a, self.lora_b).t())
+        lora_update = torch.matmul(self.lora_a, self.lora_b).t()
+        return torch.matmul(x, (self.weight + lora_update).t())
 
 class SimpleNNWithLoRA(nn.Module):
     def __init__(self):
         super(SimpleNNWithLoRA, self).__init__()
-        self.fc1 = LoRA(2, 10, rank=2)
+        self.fc1 = LoRALayer(2, 10, rank=2)
         self.fc2 = nn.Linear(10, 2)
-    
+
     def forward(self, x):
         x = torch.relu(self.fc1(x))
         x = self.fc2(x)
