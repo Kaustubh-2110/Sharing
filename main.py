@@ -2,15 +2,15 @@ import numpy as np
 
 # Example data
 texts = ["I love this movie!", "This movie is terrible."]
-labels = np.array([1, 0])  # 1 for positive, 0 for negative
+labels = np.array([1, 0], dtype=np.float32)  # 1 for positive, 0 for negative
 
 # Simulated output from a pre-trained model (2 samples, 768 features each)
 np.random.seed(0)
-pretrained_output = np.random.rand(2, 768)
+pretrained_output = np.random.rand(2, 768).astype(np.float32)
 
 # Adapter layer weights (768 input features, 1 output feature)
-adapter_weights = np.random.rand(768, 1)
-adapter_bias = np.random.rand(1)
+adapter_weights = np.random.rand(768, 1).astype(np.float32)
+adapter_bias = np.random.rand(1).astype(np.float32)
 
 # Sigmoid function
 def sigmoid(x):
@@ -64,6 +64,6 @@ for epoch in range(epochs):
         print(f"Epoch {epoch}, Loss: {loss:.4f}")
 
 # Example inference
-test_pretrained_output = np.random.rand(1, 768)  # Simulated pre-trained output for a new sample
+test_pretrained_output = np.random.rand(1, 768).astype(np.float32)  # Simulated pre-trained output for a new sample
 test_pred = forward(test_pretrained_output, adapter_weights, adapter_bias)
 print(f"Predicted sentiment probability: {test_pred[0, 0]:.4f}")
