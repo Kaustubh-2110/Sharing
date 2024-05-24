@@ -1,12 +1,14 @@
 import numpy as np
-import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
 from sklearn.metrics import classification_report, accuracy_score
+import torch
+import torch.nn as nn
+import torch.optim as optim
 
-# Step 1: Generate the data
-np.random.seed(42)  # for reproducibility
+# Set random seed for reproducibility
+np.random.seed(42)
+torch.manual_seed(42)
 
 # Generate 500 points for class 1
 mean1 = [1, 0]
@@ -33,40 +35,104 @@ y_train = np.hstack((y_train_class1, y_train_class2))
 X_test = np.vstack((X_test_class1, X_test_class2))
 y_test = np.hstack((y_test_class1, y_test_class2))
 
-# Step 3: Train a classifier
 # Standardize the data
 scaler = StandardScaler()
 X_train = scaler.fit_transform(X_train)
 X_test = scaler.transform(X_test)
 
-# Train an SVM classifier
-classifier = SVC(kernel='linear', random_state=42)
-classifier.fit(X_train, y_train)
+# Convert data to PyTorch tensors
+X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+y_train_tensor = torch.tensor(y_train, dtype=torch.long)
+X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
+y_test_tensor = torch.tensor(y_test, dtype=torch.long)
 
-# Step 4: Test the classifier
-y_pred = classifier.predict(X_test)
+class SimpleNN(nn.Module):
+    def __init__(self):
+        super(SimpleNN, self).__init__()
+        self.fc1 = nn.Linear(2, 10)
+        self.fc2 = nn.Linear(10, 2)
+    
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
 
-# Print the classification report and accuracy to a text file
-with open("classification_report.txt", "w") as f:
-    f.write("Classification Report:\n")
-    f.write(classification_report(y_test, y_pred))
-    f.write("\nAccuracy: " + str(accuracy_score(y_test, y_pred)))
+model = SimpleNN()
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-# Optional: Plot the data and decision boundary
-def plot_decision_boundary(clf, X, y):
-    h = .02  # step size in the mesh
-    x_min, x_max = X[:, 0].min() - 1, X[:, 0].max() + 1
-    y_min, y_max = X[:, 1].min() - 1, X[:, 1].max() + 1
-    xx, yy = np.meshgrid(np.arange(x_min, x_max, h), np.arange(y_min, y_max, h))
-    Z = clf.predict(np.c_[xx.ravel(), yy.ravel()])
-    Z = Z.reshape(xx.shape)
-    plt.contourf(xx, yy, Z, alpha=0.8)
-    plt.scatter(X[:, 0], X[:, 1], c=y, edgecolors='k', marker='o')
-    plt.xlabel('Feature 1')
-    plt.ylabel('Feature 2')
-    plt.title('Decision Boundary')
+# Train the model
+num_epochs = 50
+for epoch in range(num_epochs):
+    model.train()
+    optimizer.zero_grad()
+    outputs = model(X_train_tensor)
+    loss = criterion(outputs, y_train_tensor)
+    loss.backward()
+    optimizer.step()
+    if (epoch+1) % 10 == 0:
+        print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
 
-# Save the plot
-plot_decision_boundary(classifier, X_test, y_test)
-plt.savefig("decision_boundary.png")
-plt.close()
+# Evaluate the model
+model.eval()
+with torch.no_grad():
+    test_outputs = model(X_test_tensor)
+    _, predicted = torch.max(test_outputs, 1)
+    accuracy = (predicted == y_test_tensor).sum().item() / y_test_tensor.size(0)
+    print(f'Accuracy of the model on the test set: {accuracy * 100:.2f}%')
+    report = classification_report(y_test_tensor, predicted, target_names=['Class 0', 'Class 1'])
+    print(report)
+
+class LoRA(nn.Module):
+    def __init__(self, original_layer, rank):
+        super(LoRA, self).__init__()
+        self.original_layer = original_layer
+        self.rank = rank
+        self.lora_a = nn.Parameter(torch.randn(original_layer.weight.size(0), rank))
+        self.lora_b = nn.Parameter(torch.randn(rank, original_layer.weight.size(1)))
+    
+    def forward(self, x):
+        return self.original_layer(x) + torch.mm(self.lora_a, self.lora_b)
+
+class SimpleNNWithLoRA(nn.Module):
+    def __init__(self):
+        super(SimpleNNWithLoRA, self).__init__()
+        self.fc1 = LoRA(nn.Linear(2, 10), rank=2)
+        self.fc2 = nn.Linear(10, 2)
+    
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
+model_lora = SimpleNNWithLoRA()
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model_lora.parameters(), lr=0.001)
+
+# Train the model with LoRA
+num_epochs = 50
+for epoch in range(num_epochs):
+    model_lora.train()
+    optimizer.zero_grad()
+    outputs = model_lora(X_train_tensor)
+    loss = criterion(outputs, y_train_tensor)
+    loss.backward()
+    optimizer.step()
+    if (epoch+1) % 10 == 0:
+        print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
+
+# Evaluate the model with LoRA
+model_lora.eval()
+with torch.no_grad():
+    test_outputs = model_lora(X_test_tensor)
+    _, predicted = torch.max(test_outputs, 1)
+    accuracy = (predicted == y_test_tensor).sum().item() / y_test_tensor.size(0)
+    print(f'Accuracy of the model with LoRA on the test set: {accuracy * 100:.2f}%')
+    report = classification_report(y_test_tensor, predicted, target_names=['Class 0', 'Class 1'])
+    print(report)
+
+# Save the classification report to a file
+with open("classification_report_lora.txt", "w") as f:
+    f.write("Classification Report with LoRA:\n")
+    f.write(report)
+    f.write("\nAccuracy: " + str(accuracy * 100) + "%")
