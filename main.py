@@ -1,155 +1,122 @@
-import numpy as np
-import gzip
-import urllib.request
+import re
+from collections import Counter, defaultdict
 
-# Helper function to load the MNIST dataset
-def load_mnist():
-    def download(filename):
-        url = 'http://yann.lecun.com/exdb/mnist/' + filename
-        urllib.request.urlretrieve(url, filename)
+def get_vocab(corpus):
+    """
+    Create a vocabulary from the corpus with character-level tokens.
+    """
+    vocab = Counter()
+    for word in corpus:
+        word = ' '.join(list(word)) + ' </w>'
+        vocab[word] += 1
+    return vocab
+
+def get_stats(vocab):
+    """
+    Get frequency of pairs of characters.
+    """
+    pairs = defaultdict(int)
+    for word, freq in vocab.items():
+        symbols = word.split()
+        for i in range(len(symbols)-1):
+            pairs[symbols[i], symbols[i+1]] += freq
+    return pairs
+
+def merge_vocab(pair, vocab):
+    """
+    Merge the most frequent pair.
+    """
+    bigram = re.escape(' '.join(pair))
+    pattern = re.compile(r'(?<!\S)' + bigram + r'(?!\S)')
+    new_vocab = {}
+    for word in vocab:
+        new_word = pattern.sub(''.join(pair), word)
+        new_vocab[new_word] = vocab[word]
+    return new_vocab
+
+def bpe(corpus, num_merges):
+    """
+    Perform Byte Pair Encoding on the corpus.
+    """
+    vocab = get_vocab(corpus)
+    for _ in range(num_merges):
+        pairs = get_stats(vocab)
+        if not pairs:
+            break
+        best_pair = max(pairs, key=pairs.get)
+        vocab = merge_vocab(best_pair, vocab)
+    return vocab
+
+# Example usage:
+corpus = ["hello", "hell", "heaven", "goodbye"]
+num_merges = 10
+vocab = bpe(corpus, num_merges)
+print(vocab)
+
+import torch
+import torch.nn as nn
+
+class EmbeddingLayer(nn.Module):
+    def __init__(self, vocab_size, d_model):
+        super(EmbeddingLayer, self).__init__()
+        self.embedding = nn.Embedding(vocab_size, d_model)
     
-    def load_images(filename):
-        with gzip.open(filename, 'rb') as f:
-            data = np.frombuffer(f.read(), np.uint8, offset=16)
-        return data.reshape(-1, 1, 28, 28) / 255.0
+    def forward(self, input_tokens):
+        return self.embedding(input_tokens)
 
-    def load_labels(filename):
-        with gzip.open(filename, 'rb') as f:
-            return np.frombuffer(f.read(), np.uint8, offset=8)
-    
-    download('train-images-idx3-ubyte.gz')
-    download('train-labels-idx1-ubyte.gz')
-    download('t10k-images-idx3-ubyte.gz')
-    download('t10k-labels-idx1-ubyte.gz')
-    
-    train_images = load_images('train-images-idx3-ubyte.gz')
-    train_labels = load_labels('train-labels-idx1-ubyte.gz')
-    test_images = load_images('t10k-images-idx3-ubyte.gz')
-    test_labels = load_labels('t10k-labels-idx1-ubyte.gz')
-    
-    return train_images, train_labels, test_images, test_labels
+# Example usage:
+vocab_size = 10000  # Example vocabulary size
+d_model = 512       # Embedding dimension
+embedding_layer = EmbeddingLayer(vocab_size, d_model)
 
-train_images, train_labels, test_images, test_labels = load_mnist()
+input_tokens = torch.LongTensor([[1, 2, 3], [4, 5, 6]])  # Example input
+embeddings = embedding_layer(input_tokens)
+print(embeddings.shape)  # (2, 3, 512)
 
-def softmax(x):
-    exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))
-    return exp_x / np.sum(exp_x, axis=1, keepdims=True)
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        self.pos_embedding = self._get_positional_embeddings(max_len, d_model)
 
-def relu(x):
-    return np.maximum(0, x)
-
-def relu_derivative(x):
-    return np.where(x > 0, 1, 0)
-
-def one_hot_encode(labels, num_classes):
-    return np.eye(num_classes)[labels]
-
-class SimpleCNN:
-    def __init__(self):
-        self.conv1_filters = np.random.randn(8, 1, 3, 3) * 0.1  # 8 filters, 1 input channel, 3x3 kernel
-        self.conv2_filters = np.random.randn(16, 8, 3, 3) * 0.1  # 16 filters, 8 input channels, 3x3 kernel
-        self.fc_weights = np.random.randn(16 * 5 * 5, 10) * 0.1  # Fully connected layer
+    def _get_positional_embeddings(self, max_len, d_model):
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(torch.log(torch.tensor(10000.0)) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0).transpose(0, 1)
+        return pe
 
     def forward(self, x):
-        self.x = x
-        self.conv1 = relu(self.convolve(x, self.conv1_filters))
-        self.pool1 = self.maxpool(self.conv1)
-        self.conv2 = relu(self.convolve(self.pool1, self.conv2_filters))
-        self.pool2 = self.maxpool(self.conv2)
-        self.fc_input = self.pool2.reshape(self.pool2.shape[0], -1)
-        self.fc_output = np.dot(self.fc_input, self.fc_weights)
-        self.output = softmax(self.fc_output)
-        return self.output
+        return x + self.pos_embedding[:x.size(0), :]
+
+# Example usage:
+d_model = 512
+max_len = 1000
+pos_encoding = PositionalEncoding(d_model, max_len)
+
+# Assume embeddings is the output from the embedding layer
+embeddings = torch.randn(50, 32, d_model)  # (seq_len, batch_size, d_model)
+embeddings_with_pos = pos_encoding(embeddings)
+print(embeddings_with_pos.shape)  # (50, 32, 512)
+
+class TransformerModel(nn.Module):
+    def __init__(self, vocab_size, d_model, max_len):
+        super(TransformerModel, self).__init__()
+        self.embedding_layer = EmbeddingLayer(vocab_size, d_model)
+        self.positional_encoding = PositionalEncoding(d_model, max_len)
     
-    def convolve(self, x, filters):
-        batch_size, in_channels, height, width = x.shape
-        out_channels, _, kernel_height, kernel_width = filters.shape
-        output_height = height - kernel_height + 1
-        output_width = width - kernel_width + 1
-        conv_output = np.zeros((batch_size, out_channels, output_height, output_width))
-        for i in range(output_height):
-            for j in range(output_width):
-                region = x[:, :, i:i+kernel_height, j:j+kernel_width]
-                conv_output[:, :, i, j] = np.tensordot(region, filters, axes=([1, 2, 3], [1, 2, 3]))
-        return conv_output
+    def forward(self, input_tokens):
+        embeddings = self.embedding_layer(input_tokens)
+        embeddings_with_pos = self.positional_encoding(embeddings)
+        return embeddings_with_pos
 
-    def maxpool(self, x, size=2, stride=2):
-        batch_size, channels, height, width = x.shape
-        pooled_height = (height - size) // stride + 1
-        pooled_width = (width - size) // stride + 1
-        pooled_output = np.zeros((batch_size, channels, pooled_height, pooled_width))
-        for i in range(pooled_height):
-            for j in range(pooled_width):
-                region = x[:, :, i*stride:i*stride+size, j*stride:j*stride+size]
-                pooled_output[:, :, i, j] = np.max(region, axis=(2, 3))
-        return pooled_output
+# Example usage:
+vocab_size = 10000
+d_model = 512
+max_len = 1000
+model = TransformerModel(vocab_size, d_model, max_len)
 
-    def backward(self, x, y, learning_rate=0.01):
-        batch_size = x.shape[0]
-        grad_output = self.output - y
-        grad_fc_weights = np.dot(self.fc_input.T, grad_output) / batch_size
-        
-        grad_fc_input = np.dot(grad_output, self.fc_weights.T)
-        grad_pool2 = grad_fc_input.reshape(self.pool2.shape)
-        
-        grad_conv2 = grad_pool2.repeat(2, axis=2).repeat(2, axis=3)
-        grad_conv2 = grad_conv2 * relu_derivative(self.conv2)
-        grad_conv2_filters = self.compute_grad_filters(self.pool1, grad_conv2, self.conv2_filters.shape)
-        
-        grad_pool1 = self.deconvolve(grad_conv2, self.conv2_filters, self.pool1.shape)
-        grad_conv1 = grad_pool1.repeat(2, axis=2).repeat(2, axis=3)
-        grad_conv1 = grad_conv1 * relu_derivative(self.conv1)
-        grad_conv1_filters = self.compute_grad_filters(self.x, grad_conv1, self.conv1_filters.shape)
-        
-        self.fc_weights -= learning_rate * grad_fc_weights
-        self.conv2_filters -= learning_rate * grad_conv2_filters
-        self.conv1_filters -= learning_rate * grad_conv1_filters
-    
-    def compute_grad_filters(self, x, grad, filter_shape):
-        batch_size, in_channels, height, width = x.shape
-        out_channels, _, kernel_height, kernel_width = filter_shape
-        grad_filters = np.zeros(filter_shape)
-        for i in range(kernel_height):
-            for j in range(kernel_width):
-                region = x[:, :, i:height-kernel_height+i+1, j:width-kernel_width+j+1]
-                grad_filters[:, :, i, j] = np.tensordot(grad, region, axes=([0, 2, 3], [0, 2, 3]))
-        return grad_filters / batch_size
-
-    def deconvolve(self, grad, filters, output_shape):
-        batch_size, out_channels, height, width = output_shape
-        _, in_channels, kernel_height, kernel_width = filters.shape
-        grad_output = np.zeros(output_shape)
-        for i in range(height):
-            for j in range(width):
-                grad_output[:, :, i, j] = np.tensordot(grad[:, :, i:i+1, j:j+1], filters, axes=([1], [0]))
-        return grad_output
-
-# One-hot encode labels
-train_labels_oh = one_hot_encode(train_labels, 10)
-test_labels_oh = one_hot_encode(test_labels, 10)
-
-# Initialize CNN
-cnn = SimpleCNN()
-
-# Training parameters
-epochs = 3
-batch_size = 32
-learning_rate = 0.01
-
-# Training loop
-for epoch in range(epochs):
-    for i in range(0, len(train_images), batch_size):
-        x_batch = train_images[i:i+batch_size]
-        y_batch = train_labels_oh[i:i+batch_size]
-        
-        # Forward pass
-        outputs = cnn.forward(x_batch)
-        
-        # Backward pass and update weights
-        cnn.backward(x_batch, y_batch, learning_rate)
-    
-    # Evaluate accuracy on the test set
-    test_output = cnn.forward(test_images)
-    test_predictions = np.argmax(test_output, axis=1)
-    accuracy = np.mean(test_predictions == test_labels)
-    print(f'Epoch {epoch+1}, Test Accuracy: {accuracy:.4f}')
+input_tokens = torch.randint(0, vocab_size, (50, 32))  # (seq_len, batch_size)
+output = model(input_tokens)
+print(output.shape)  # (50, 32, 512)
